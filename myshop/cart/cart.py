@@ -1,0 +1,79 @@
+from decimal import Decimal
+from django.conf import settings
+from shop.models import Product
+
+
+class Cart(object):
+
+    def __init__(self, request):
+        """
+        Inicjalizacja koszyka na zakupy
+        """
+        self.session = request.session
+        cart = self.session.get(settings.CART_SESSION_ID)
+        if not cart:
+            # Zapis koszyka dla potrzeb sesji
+            cart = self.session[settings.CART_SESSION_ID] = {}
+        self.cart = cart
+
+    def add(self, product, quantity=1, update_quantity=False):
+        """
+        Dodawanie produktu do koszyka lub zmiana ilości w tymże
+        """
+        product_id = str(product.id)
+        if product_id not in self.cart:
+            self.cart[product_id] = {'quantity': 0,
+                                     'price': str(product.price)}
+        if update_quantity:
+            self.cart[product_id]['quantity'] = quantity
+        else:
+            self.cart[product_id]['quantity'] += quantity
+        self.save()
+
+    def save(self):
+        # Oznaczanie sesji jako zmodyfikowanej, aby upewnić się, że zostanie zapisana
+        self.session.modified = True
+
+    def remove(self, product):
+        """
+        Usuwanie produktów z koszyka
+        """
+        product_id = str(product.id)
+        if product_id in self.cart:
+            del self.cart[product_id]
+            self.save()
+
+    def __iter__(self):
+        """
+        Iteracja przez elementy koszyka na zakupy i pobranie produktów z bazy danych
+        """
+        product_ids = self.cart.keys()
+        # Pobieranie obiektów produktóœ i dodawanie ich do koszyka
+        products = Product.objects.filter(id__in=product_ids)
+
+        cart = self.cart.copy()
+        for product in products:
+            cart[str(product.id)]['product'] = product
+        for item in cart.values():
+            item['price'] = Decimal(item['price'])
+            item['total_price'] = item['price'] * item['quantity']
+            yield item
+
+    def __len__(self):
+        """
+        Obliczanie liczby wszystkich elementów w koszyku na zakupy
+        """
+        return sum(item['quantity'] for item in self.cart.values())
+
+    def get_total_price(self):
+        """
+        Obliczenia wartości całkowitej produktów w koszyku
+        """
+        return sum(Decimal(item['price']) * item['quantity'] for item in self.cart.values())
+
+    def clear(self):
+        """
+        Usuwanie zawartości z koszyka
+        """
+        del self.session[settings.CART_SESSION_ID]
+        self.save()
